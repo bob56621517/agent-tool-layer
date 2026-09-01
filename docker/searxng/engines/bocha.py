@@ -25,14 +25,19 @@
 **API 契约要点:**
 - 端点: ``POST https://api.bochaai.com/v1/web-search``
 - 认证: ``Authorization: Bearer <BOCHA_API_KEY>``
-- 字段: ``query`` 必填;``count`` 钳制 1..50 默认 10;``freshness`` 枚举或日期区间;
+- 字段: ``query`` 必填;``count`` 钳制 1..50 默认 50(兜底拉满);``freshness`` 枚举或日期区间;
   ``summary`` 布尔
 - 响应: 顶层 ``code === 200`` 才成功,否则取 ``msg``;结果在 ``data.webPages.value[]``
 """
 
+import asyncio
 import os
 import re
 from dateutil import parser as date_parser
+
+from searx.exceptions import SearxEngineAccessDeniedException
+from searx.network import get_context_network
+from searx.network.client import get_loop
 
 engine_type = "online"
 categories = ["general"]
@@ -69,11 +74,15 @@ TIME_RANGE_TO_FRESHNESS = {
 # 引擎配置(由 init() 注入,含 settings.yml 中该条目的自定义键)
 # 若无显式配置,回退到环境变量
 _bocha_api_key = ""
-_bocha_count = 10
+_bocha_count = 50
 
 
 def init(engine_settings):
-    """初始化:读取 settings.yml 中 bocha 条目的 ``api_key`` 与 ``count``."""
+    """初始化:读取 settings.yml 中 bocha 条目的 ``api_key`` 与 ``count``.
+
+    未配置 ``BOCHA_API_KEY`` 时返回 ``False``,让 searxng 跳过本引擎(不启用),
+    而非报错——考虑欠费/未配置场景,bocha 作为兜底源不应阻塞其它引擎。
+    """
     global _bocha_api_key, _bocha_count
 
     api_key = engine_settings.get("api_key")
@@ -81,19 +90,22 @@ def init(engine_settings):
         api_key = os.environ.get("BOCHA_API_KEY", "")
     _bocha_api_key = api_key
 
-    count = engine_settings.get("count", 10)
+    # 兜底场景尽量拉满结果数;bocha 上限 50,可经 settings.yml 的 count 调整
+    count = engine_settings.get("count", 50)
     try:
         _bocha_count = max(1, min(int(count), 50))
     except (TypeError, ValueError):
-        _bocha_count = 10
+        _bocha_count = 50
 
-    return True
+    # 无 key 时不启用引擎(searxng 会跳过它,不阻塞聚合)
+    return bool(_bocha_api_key)
 
 
 def request(query, params):
     """构建 POST 请求:填入 URL、headers、json body."""
     if not _bocha_api_key:
-        raise ValueError("BOCHA_API_KEY is not configured; set it in env or settings.yml")
+        # 不应发生(init 无 key 时引擎不会被调用),这里防御性返回空结果
+        return params
 
     body = {"query": query}
     body["summary"] = True
@@ -119,15 +131,33 @@ def request(query, params):
     return params
 
 
+def _reset_connection():
+    """同步触发一次网络连接重置(关闭当前引擎的连接池).
+
+    欠费/计费类错误时,searxng 的 httpx 连接池里会留一条\"看似有效\"的连接,
+    充值后复用会导致需重启才恢复。此函数在同步的 response() 里强制丢弃连接池,
+    下次请求用全新连接。``aclose`` 是 async,这里用事件循环同步调度。
+    """
+    try:
+        network = get_context_network()
+        loop = get_loop()
+        asyncio.run_coroutine_threadsafe(network.aclose(), loop)
+    except Exception:  # pylint: disable=broad-except
+        # 连接重置失败不应影响引擎主体,静默即可
+        pass
+
+
 def response(resp):
     """解析 bocha 响应,返回 searxng 结果列表(dict)。"""
     json_data = resp.json()
 
-    # 顶层 code !== 200 视为失败
+    # 顶层 code !== 200 视为失败;认证/计费类失败(欠费)会留下\"假有效\"连接,
+    # 主动重置连接池而非复用,充值后无需重启。
     code = json_data.get("code", -1)
     if code != 200:
         msg = json_data.get("msg") or json_data.get("message") or "unknown bocha error"
-        raise RuntimeError(f"bocha error (code={code}): {msg}")
+        _reset_connection()
+        raise SearxEngineAccessDeniedException(message=f"bocha error (code={code}): {msg}")
 
     pages = (json_data.get("data") or {}).get("webPages") or {}
     results = []

@@ -1,8 +1,9 @@
 # agent-tool-layer —— 联网搜索工具层后端 容器编排
 #
-# 服务构成:nginx(对外唯一入口 28082) + searxng(聚合搜索) + valkey(cache/限流) + jina(Reader)
+# 服务构成:nginx(对外唯一入口 28082,负责限流) + searxng(聚合搜索) + jina(Reader)
 # 对外只暴露 nginx 端口 28082,内部服务不暴露到宿主。
 # nginx 把 searxng 与 jina 伪装成一个服务:searxng 原始 URL 全部保留, jina 挂在 /read/ 下。
+# 限流由 nginx 承担(limit_req),searxng 关闭自身 limiter(无需 valkey)。
 #
 # 用法:
 #   cp .env.example .env    # 填写 BOCHA_API_KEY / GITHUB_TOKEN / SEARXNG_SECRET
@@ -41,35 +42,29 @@ services:
       SEARXNG_PORT: "8080"
       # 对外 base URL 不带路径前缀;searxng 原样暴露在根路径(nginx 把 jina 挂在 /read/ 下)
       SEARXNG_BASE_URL: "http://localhost:${INGRESS_PORT:-28082}"
-      SEARXNG_VALKEY_URL: "${SEARXNG_VALKEY_URL:-valkey://valkey:6379/0}"
-      SEARXNG_LIMITER: "true"
+      # 限流由 nginx 做;searxng 关闭自身 limiter,因此无需 valkey
+      SEARXNG_LIMITER: "false"
       # bocha 引擎由自身的 init() 从 BOCHA_API_KEY 读取,经 env 注入,不落文件
       BOCHA_API_KEY: "${BOCHA_API_KEY:-}"
+      # github_code 引擎 token:由 entrypoint 注入 settings(有 GITHUB_TOKEN 走认证,无则匿名)
+      GITHUB_TOKEN: "${GITHUB_TOKEN:-}"
     volumes:
-      # settings.yml 只读;bocha 密钥经 env 注入,github_code 默认匿名(见 settings.yml 说明)
+      # settings.yml 是模板(含 $GITHUB_TOKEN 占位),由 entrypoint 注入 token 后生成最终生效配置
       - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
-      # limiter 配置(缺省时 limiter 会 ban 掉无法识别 IP 的请求)
-      - ./searxng/limiter.toml:/etc/searxng/limiter.toml:ro
       # 自定义引擎(bocha.py):只挂载单文件到引擎目录,与内置引擎并列,不覆盖整个目录
       - ./searxng/engines/bocha.py:/usr/local/searxng/searx/engines/bocha.py:ro
-    depends_on:
-      valkey:
-        condition: service_started
+      # 自定义 entrypoint:把 GITHUB_TOKEN 注入 settings(到 /tmp),再调官方 entrypoint
+      - ./searxng/entrypoint.sh:/local/entrypoint.sh:ro
+    entrypoint:
+      - /bin/sh
+      - /local/entrypoint.sh
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO /dev/null http://localhost:8080/ || exit 1"]
+      # 用 /healthz(不经过 limiter,稳定返回 200);避免健康检查被限流拦成 4xx
+      test: ["CMD-SHELL", "wget -qO /dev/null http://localhost:8080/healthz || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 5
       start_period: 30s
-    networks:
-      - atl
-
-  # ---------- valkey 缓存/限流(不对外暴露) ----------
-  valkey:
-    image: ghcr.io/valkey-io/valkey:9.1.2-alpine3.24
-    container_name: atl-valkey
-    restart: unless-stopped
-    command: ["valkey-server", "--save", "60", "1", "--appendonly", "no"]
     networks:
       - atl
 

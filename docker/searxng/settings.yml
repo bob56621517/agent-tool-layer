@@ -1,16 +1,16 @@
 # SearXNG 配置 —— agent-tool-layer 联网搜索工具层后端
 #
-# 装配方式:基于官方默认设定(use_default_settings),仅覆盖本实例需要调整的部分。
-# 默认清单里的所有引擎默认 disabled: true;下方 engines 段显式启用的引擎会被加入。
+# 装配方式:基于官方默认设定(use_default_settings),用 keep_only 只保留下方 engines 清单中的引擎,
+# 其余 searxng 默认引擎全部排除,保证聚合干净。
 #
 # 环境变量注入(见 docker-compose.yml / .env.example):
 #   SEARXNG_SECRET        服务端密钥(必需)
-#   SEARXNG_VALKEY_URL    valkey 连接串,如 valkey://valkey:6379/0
-#   SEARXNG_BIND_ADDRESS  绑定地址,默认 127.0.0.1(容器内不对外,由 nginx 反代)
+#   SEARXNG_BIND_ADDRESS  绑定地址(容器内不对外,由 nginx 反代)
 #   SEARXNG_PORT          监听端口,默认 8080
 #   SEARXNG_BASE_URL      对外 URL,用于生成正确链接
-#   BOCHA_API_KEY         博查密钥(bocha 兜底引擎)
-#   GITHUB_TOKEN          GitHub 密钥(github / github_code 引擎,可选但推荐)
+#   SEARXNG_LIMITER       是否开启 searxng 自身限流(本架构由 nginx 限流,保持 false)
+#   BOCHA_API_KEY         博查密钥(bocha 兜底引擎,经 env 注入,不落文件)
+#   GITHUB_TOKEN          github_code 引擎 token(经 entrypoint 注入,不落文件)
 
 use_default_settings:
   engines:
@@ -27,15 +27,10 @@ use_default_settings:
 
 server:
   instance_name: "agent-tool-layer searxng"
-  # valkey 缓存/限流后端,由环境变量注入
-  # limiter 开启,防止暴露端口被扫
-  limiter: true
+  # 限流由 nginx 承担;searxng 关闭自身 limiter(无需 valkey,内部不识别客户端 IP)
+  limiter: false
   # 绑定容器内地址,不对宿主暴露
   image_proxy: true
-
-# 缓存与限流后端(valkey 单机,不对外暴露)
-valkey:
-  url: valkey://valkey:6379/0
 
 search:
   # 聚合默认源与兜底源;safe_search 走 moderate
@@ -112,12 +107,9 @@ engines:
     shortcut: ghc
     categories: [it, code]
     disabled: false
-    # github_code 需要认证才不被严格限流。内置引擎通过 ghc_auth 读取 token,
-    # 不直接读环境变量。
-    # 为安全起见(令牌不进版本库),此处默认走匿名限流(type: "none")。
-    # 如需提升配额,部署时把下面改为:
-    #   ghc_auth:
-    #     type: "personal_access_token"
-    #     token: "<真正的 GitHub token,由 env 注入,勿提交仓库>"
+    # github_code 需要认证才不被严格限流。内置引擎通过 ghc_auth 读取 token,不读环境变量。
+    # 此处用占位符:$GITHUB_TOKEN 由 entrypoint(searxng/entrypoint.sh)在启动时注入。
+    # 若环境变量 GITHUB_TOKEN 为空,entrypoint 会自动把 type 回退为 "none"(匿名限流),不报错。
     ghc_auth:
-      type: "none"
+      type: "personal_access_token"
+      token: "$GITHUB_TOKEN"

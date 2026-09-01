@@ -15,7 +15,10 @@
 
 - searxng 的原始路由( `/search`、`/config` 等)原样保留在根路径;
 - 网页读取挂在 `/read/` 前缀下(映射到 jina reader);
-- GET / POST 都支持。
+- GET / POST 都支持;
+- 限流由 nginx 承担(按客户端 IP),searxng 关闭自身 limiter。
+
+服务构成:**nginx(唯一入口,负责限流)+ searxng(聚合搜索)+ jina(Reader)**。无 valkey——限流在 nginx 层做,searxng 用不到 valkey。
 
 ## 部署
 
@@ -35,8 +38,8 @@ cp .env.example .env
 
 可选项(不填则对应能力降级):
 
-- `BOCHA_API_KEY` —— bocha(博查)付费兜底搜索。不填则聚合只靠常用源,网络差时可能无结果。
-- `GITHUB_TOKEN` —— 见下方"GitHub 搜索"说明,默认不填。
+- `BOCHA_API_KEY` —— bocha(博查)付费兜底搜索。不填则聚合只靠常用源,网络差时可能无结果。bocha 单次拉满返回 50 条(博查按次计费,拉满不贵)。
+- `GITHUB_TOKEN` —— 见下方"GitHub 搜索"说明,默认不填(走匿名限流)。
 
 ### 2. 启动
 
@@ -111,17 +114,17 @@ curl "http://localhost:28082/search?format=json&q=python&categories=general"
 
 - **常用源**:google / bing / baidu / duckduckgo。部分网络环境下 google / duckduckgo 可能不稳定(超时或 CAPTCHA),searxng 会自动隔离这些失败引擎,不阻塞整体结果。
 - **bocha(兜底)**:付费源,权重较高,保证任何网络条件下有结果。只用 `web-search` 端点,不带 AI 总结。
-- **github**:仓库搜索(`github`)。**github_code(代码搜索)**:默认走匿名(限流较严),如需提升配额,在 `docker/searxng/settings.yml` 的 `github code` 条目里把 `ghc_auth.type` 改为 `personal_access_token` 并填入 token(勿把真实 token 提交进仓库)。
+- **github**:仓库搜索(`github`)。**github_code(代码搜索)**:走 `GITHUB_TOKEN` 环境变量(启动时由 `entrypoint.sh` 自动注入 settings,不落盘)。设了 `GITHUB_TOKEN` 用认证模式(配额高);不设则自动回退匿名(限流严)。
 
 ## 目录结构
 
 ```
 docker/
-├── docker-compose.yml          # 4 服务编排
-├── nginx/nginx.conf            # 反代入口(searxng 原样 + jina /read/)
+├── docker-compose.yml          # 3 服务编排(nginx / searxng / jina)
+├── nginx/nginx.conf            # 反代入口(searxng 原样 + jina /read/) + 限流
 ├── searxng/
 │   ├── settings.yml            # 引擎清单 + 默认值
-│   ├── limiter.toml            # 限流配置
+│   ├── entrypoint.sh           # 把 GITHUB_TOKEN 注入 settings(到 /tmp)
 │   └── engines/bocha.py        # bocha 自定义引擎
 ├── .env.example                # 环境变量模板
 └── .gitignore
@@ -130,6 +133,8 @@ docker/
 ## 常见问题
 
 **`/search?format=json` 返回 403** —— settings.yml 里的 `search.formats` 必须包含 `json`(本仓库已配置)。
+
+**返回 429 Too Many Requests** —— 这是 nginx 的限流(`limit_req`)按客户端 IP 拦的。默认 10 请求/秒、突发 20;可在 `docker/nginx/nginx.conf` 里调 `limit_req_zone` 的 `rate` 与 `limit_req` 的 `burst`。若你的 agent 高并发,适当放宽。
 
 **searxng 重建后 nginx 502** —— nginx 已配置 Docker DNS 自动重新解析(`resolver` + `resolve`),通常无需手动重启;若仍 502,`docker restart atl-nginx`。
 
