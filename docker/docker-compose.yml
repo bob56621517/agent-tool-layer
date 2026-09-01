@@ -1,0 +1,104 @@
+# agent-tool-layer —— 联网搜索工具层后端 容器编排
+#
+# 服务构成:nginx(对外唯一入口 28082) + searxng(聚合搜索) + valkey(cache/限流) + jina(Reader)
+# 对外只暴露 nginx 端口 28082,内部服务不暴露到宿主。
+# nginx 把 searxng 与 jina 伪装成一个服务:searxng 原始 URL 全部保留, jina 挂在 /read/ 下。
+#
+# 用法:
+#   cp .env.example .env    # 填写 BOCHA_API_KEY / GITHUB_TOKEN / SEARXNG_SECRET
+#   docker compose up -d
+#   curl "http://localhost:28082/search?format=json&q=hello"     # 聚合搜索(searxng 原样)
+#   curl "http://localhost:28082/read/https://example.com"       # 网页 -> Markdown(jina)
+
+services:
+  # ---------- 入口:nginx ----------
+  nginx:
+    image: ${NGINX_IMAGE:-ghcr.io/nginxinc/nginx-unprivileged:1.27-alpine}
+    container_name: atl-nginx
+    restart: unless-stopped
+    ports:
+      - "${INGRESS_PORT:-28082}:8080"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      searxng:
+        condition: service_healthy
+      jina:
+        condition: service_healthy
+    networks:
+      - atl
+
+  # ---------- SearXNG 聚合搜索 ----------
+  searxng:
+    image: ghcr.io/searxng/searxng:2026.8.29-d226b78bc
+    container_name: atl-searxng
+    restart: unless-stopped
+    environment:
+      SEARXNG_SECRET: "${SEARXNG_SECRET:?SEARXNG_SECRET is required}"
+      SEARXNG_BIND_ADDRESS: "0.0.0.0"
+      # granian(searxng 的 ASGI 服务)需要显式指定 IPv4 绑定,否则默认 :: 在无 IPv6 容器里失败
+      GRANIAN_HOST: "0.0.0.0"
+      SEARXNG_PORT: "8080"
+      # 对外 base URL 不带路径前缀;searxng 原样暴露在根路径(nginx 把 jina 挂在 /read/ 下)
+      SEARXNG_BASE_URL: "http://localhost:${INGRESS_PORT:-28082}"
+      SEARXNG_VALKEY_URL: "${SEARXNG_VALKEY_URL:-valkey://valkey:6379/0}"
+      SEARXNG_LIMITER: "true"
+      # bocha 引擎由自身的 init() 从 BOCHA_API_KEY 读取,经 env 注入,不落文件
+      BOCHA_API_KEY: "${BOCHA_API_KEY:-}"
+    volumes:
+      # settings.yml 只读;bocha 密钥经 env 注入,github_code 默认匿名(见 settings.yml 说明)
+      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
+      # limiter 配置(缺省时 limiter 会 ban 掉无法识别 IP 的请求)
+      - ./searxng/limiter.toml:/etc/searxng/limiter.toml:ro
+      # 自定义引擎(bocha.py):只挂载单文件到引擎目录,与内置引擎并列,不覆盖整个目录
+      - ./searxng/engines/bocha.py:/usr/local/searxng/searx/engines/bocha.py:ro
+    depends_on:
+      valkey:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO /dev/null http://localhost:8080/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - atl
+
+  # ---------- valkey 缓存/限流(不对外暴露) ----------
+  valkey:
+    image: ghcr.io/valkey-io/valkey:9.1.2-alpine3.24
+    container_name: atl-valkey
+    restart: unless-stopped
+    command: ["valkey-server", "--save", "60", "1", "--appendonly", "no"]
+    networks:
+      - atl
+
+  # ---------- Jina Reader:URL -> Markdown(不对外暴露) ----------
+  jina:
+    # 固定版本(镜像 digest,不可变),与开发/生产保持一致
+    image: ghcr.io/jina-ai/reader@sha256:8cc9a5cf6dc9c240235fccc0026661de74b6e13c21b36e6a86b3281b9ef10f28
+    container_name: atl-jina
+    restart: unless-stopped
+    environment:
+      PORT: "8080"
+    # jina 基于 puppeteer/Chrome,内存需求较高;不足会启动失败
+    deploy:
+      resources:
+        limits:
+          memory: 4g
+        reservations:
+          memory: 1g
+    healthcheck:
+      # jina 的 8080 是 HTTP/2(h2c),healthcheck 走 8081(HTTP/1.1 备用端口)
+      test: ["CMD-SHELL", "wget -qO /dev/null --timeout=15 http://localhost:8081/https://example.com || exit 1"]
+      interval: 30s
+      timeout: 20s
+      retries: 8
+      # jina 启动需初始化 Chrome/puppeteer,预留较长启动窗口
+      start_period: 120s
+    networks:
+      - atl
+
+networks:
+  atl:
+    driver: bridge

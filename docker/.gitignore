@@ -1,0 +1,10 @@
+# 本地环境变量(含密钥),绝不提交
+.env
+.env.local
+
+# 运行时产生的临时文件
+*.log
+
+# Python 编译缓存
+__pycache__/
+*.pyc

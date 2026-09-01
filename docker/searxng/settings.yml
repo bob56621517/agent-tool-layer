@@ -1,0 +1,123 @@
+# SearXNG 配置 —— agent-tool-layer 联网搜索工具层后端
+#
+# 装配方式:基于官方默认设定(use_default_settings),仅覆盖本实例需要调整的部分。
+# 默认清单里的所有引擎默认 disabled: true;下方 engines 段显式启用的引擎会被加入。
+#
+# 环境变量注入(见 docker-compose.yml / .env.example):
+#   SEARXNG_SECRET        服务端密钥(必需)
+#   SEARXNG_VALKEY_URL    valkey 连接串,如 valkey://valkey:6379/0
+#   SEARXNG_BIND_ADDRESS  绑定地址,默认 127.0.0.1(容器内不对外,由 nginx 反代)
+#   SEARXNG_PORT          监听端口,默认 8080
+#   SEARXNG_BASE_URL      对外 URL,用于生成正确链接
+#   BOCHA_API_KEY         博查密钥(bocha 兜底引擎)
+#   GITHUB_TOKEN          GitHub 密钥(github / github_code 引擎,可选但推荐)
+
+use_default_settings:
+  engines:
+    # 仅保留清单内的引擎,其余默认引擎(arxiv/flickr/google cse/brave 等)全部排除,
+    # 保证聚合干净、只走常用源 + bocha 兜底 + GitHub。
+    keep_only:
+      - google
+      - bing
+      - baidu
+      - duckduckgo
+      - bocha
+      - github
+      - github code
+
+server:
+  instance_name: "agent-tool-layer searxng"
+  # valkey 缓存/限流后端,由环境变量注入
+  # limiter 开启,防止暴露端口被扫
+  limiter: true
+  # 绑定容器内地址,不对宿主暴露
+  image_proxy: true
+
+# 缓存与限流后端(valkey 单机,不对外暴露)
+valkey:
+  url: valkey://valkey:6379/0
+
+search:
+  # 聚合默认源与兜底源;safe_search 走 moderate
+  safe_search: 1
+  # 必须显式声明允许的输出格式,否则格式会退化,format=json 会 403
+  formats: [html, csv, json, rss]
+  # 默认语言自适应
+  default_lang: "auto"
+
+# 对外出站请求的默认值
+outgoing:
+  # 请求超时
+  request_timeout: 10.0
+  # 连接/池化
+  pool_connections: 20
+  pool_maxsize: 20
+  # 总请求重试次数
+  max_retries: 2
+  # 允许的 HTTP 方法
+  enable_http: true
+
+engines:
+  # ---------- 常用聚合源 ----------
+  - name: google
+    engine: google
+    shortcut: go
+    categories: [general]
+    disabled: false
+    # 部分网络环境下 google 不稳定,交给权重与兜底处理
+    weight: 1.0
+
+  - name: bing
+    engine: bing
+    shortcut: bi
+    categories: [general]
+    disabled: false
+    weight: 1.0
+
+  - name: baidu
+    engine: baidu
+    shortcut: bd
+    categories: [general]
+    disabled: false
+    weight: 1.0
+
+  - name: duckduckgo
+    engine: duckduckgo
+    shortcut: ddg
+    categories: [general]
+    disabled: false
+    weight: 1.0
+
+  # ---------- 付费兜底:bocha(博查) ----------
+  # 不用 ai-search,只用 web-search;key 由环境变量 BOCHA_API_KEY 注入
+  - name: bocha
+    engine: bocha
+    shortcut: bch
+    categories: [general]
+    disabled: false
+    # 兜底权重高于常用源,保证任何网络条件下都有结果
+    weight: 3.0
+    timeout: 10.0
+
+  # ---------- GitHub 搜索 ----------
+  # 仓库 + 代码两类,直接用 searxng 内置引擎,不自己实现
+  - name: github
+    engine: github
+    shortcut: gh
+    categories: [it, repos]
+    disabled: false
+
+  - name: github code
+    engine: github_code
+    shortcut: ghc
+    categories: [it, code]
+    disabled: false
+    # github_code 需要认证才不被严格限流。内置引擎通过 ghc_auth 读取 token,
+    # 不直接读环境变量。
+    # 为安全起见(令牌不进版本库),此处默认走匿名限流(type: "none")。
+    # 如需提升配额,部署时把下面改为:
+    #   ghc_auth:
+    #     type: "personal_access_token"
+    #     token: "<真正的 GitHub token,由 env 注入,勿提交仓库>"
+    ghc_auth:
+      type: "none"
