@@ -48,6 +48,8 @@ services:
       BOCHA_API_KEY: "${BOCHA_API_KEY:-}"
       # github_code 引擎 token:由 entrypoint 注入 settings(有 GITHUB_TOKEN 走认证,无则匿名)
       GITHUB_TOKEN: "${GITHUB_TOKEN:-}"
+      # braveapi 引擎 key:由 entrypoint 注入 settings(有 BRAVE_API_KEY 启用,无则不启用)
+      BRAVE_API_KEY: "${BRAVE_API_KEY:-}"
     volumes:
       # settings.yml 是模板(含 $GITHUB_TOKEN 占位),由 entrypoint 注入 token 后生成最终生效配置
       - ./searxng/settings.yml:/etc/searxng/settings.yml:ro

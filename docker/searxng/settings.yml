@@ -21,7 +21,9 @@ use_default_settings:
       - bing
       - baidu
       - duckduckgo
+      - 360search
       - bocha
+      - braveapi
       - github
       - github code
 
@@ -82,6 +84,23 @@ engines:
     categories: [general]
     disabled: false
     weight: 1.0
+
+  # ---------- 360 搜索(HTML 抓取,国内相对稳,不需 key)----------
+  - name: 360search
+    engine: 360search
+    shortcut: 360so
+    categories: [general]
+    disabled: false
+    timeout: 20.0
+
+  # ---------- Brave Search API(官方 API,免费额度,稳定不被反爬)----------
+  # 需 BRAVE_API_KEY(免费档 2000 次/月);经 env + entrypoint 注入 api_key 占位
+  - name: braveapi
+    engine: braveapi
+    shortcut: bv
+    categories: [general]
+    inactive: false
+    api_key: "$BRAVE_API_KEY"
 
   # ---------- 付费兜底:bocha(博查) ----------
   # 不用 ai-search,只用 web-search;key 由环境变量 BOCHA_API_KEY 注入
