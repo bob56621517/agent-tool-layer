@@ -1,0 +1,9 @@
+# 容器内被 /bin/sh 执行或由 Linux 进程读取的文件,统一 LF。
+# Windows 的 core.autocrlf 会把检出文件转成 CRLF,导致 searxng 容器里 entrypoint 崩、
+# settings 解析异常(本仓库此前因此启动失败)。固定 LF 后检出即为 LF,不随 autocrlf 变。
+* text=auto
+*.sh text eol=lf
+*.py text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.conf text eol=lf

@@ -40,7 +40,6 @@ cp .env.example .env
 
 - `BOCHA_API_KEY` —— bocha(博查)付费兜底搜索。不填则聚合只靠常用源,网络差时可能无结果。bocha 单次拉满返回 50 条(博查按次计费,拉满不贵)。
 - `GITHUB_TOKEN` —— 见下方"GitHub 搜索"说明,默认不填(走匿名限流)。
-- `BRAVE_API_KEY` —— Brave Search API(官方 API,稳定不被反爬)。注意 Brave 已于 2026-02 取消免费档,改为每月赠 $5 额度(约 1000 次)需绑卡,超出按量计费($5/1000 次)。填了启用 braveapi;不填则引擎不启用,靠 bing/360/bocha 即可。
 
 ### 2. 启动
 
@@ -114,7 +113,6 @@ curl "http://localhost:28082/search?format=json&q=python&categories=general"
 ## 搜索引擎说明
 
 - **常用源**:google / bing / baidu / duckduckgo / 360search。部分网络环境下(数据中心 IP)google / duckduckgo / baidu 可能被反爬(超时或 CAPTCHA),searxng 会自动隔离这些失败引擎,不阻塞整体结果。bing / 360 相对稳。
-- **braveapi(官方 API)**:Brave Search API。设了 `BRAVE_API_KEY` 则启用,走官方 API 稳定、不被反爬;不设则不启用。注意 Brave 已于 2026-02 取消免费档,现为每月赠 $5 额度(约 1000 次)需绑卡,超出按量计费。
 - **bocha(兜底)**:付费源(博查),权重较高,保证任何网络条件下有结果。只用 `web-search` 端点,不带 AI 总结。单次拉满 50 条。
 - **github**:仓库搜索(`github`)。**github_code(代码搜索)**:走 `GITHUB_TOKEN` 环境变量(启动时由 `entrypoint.sh` 自动注入 settings,不落盘)。设了 `GITHUB_TOKEN` 用认证模式(配额高);不设则自动回退匿名(限流严)。
 
