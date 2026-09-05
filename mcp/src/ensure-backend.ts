@@ -1,12 +1,27 @@
 import { copyFile, readFile as readTextFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { config } from "./config.js";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const composePath = resolve(here, "../docker/docker-compose.yml");
+const moduleDirectory = dirname(fileURLToPath(import.meta.url));
+
+export function resolveComposePath(moduleDirectory: string): string {
+  // Dev runs mcp/src (repo root docker), while the build runs dist/mcp (bundled dist/docker).
+  const candidates = [
+    resolve(moduleDirectory, "../../docker/docker-compose.yml"),
+    resolve(moduleDirectory, "../docker/docker-compose.yml"),
+  ];
+  const composePath = candidates.find(existsSync);
+
+  if (!composePath) {
+    throw new Error("未找到 docker/docker-compose.yml:请在仓库根目录运行,或先执行 bun run build");
+  }
+
+  return composePath;
+}
 
 function timeoutSignal(seconds: number): AbortSignal {
   return AbortSignal.timeout(seconds * 1000);
@@ -30,6 +45,7 @@ function readEnvFileSecret(content: string): string {
 }
 
 async function ensureEnvFile(): Promise<void> {
+  const composePath = resolveComposePath(moduleDirectory);
   const dockerDirectory = dirname(composePath);
   const envPath = resolve(dockerDirectory, ".env");
   const examplePath = resolve(dockerDirectory, ".env.example");
@@ -52,6 +68,7 @@ async function ensureEnvFile(): Promise<void> {
 }
 
 async function runComposeUp(): Promise<void> {
+  const composePath = resolveComposePath(moduleDirectory);
   const child = spawn("docker", ["compose", "-f", composePath, "up", "-d"], {
     cwd: dirname(composePath),
     env: process.env,
