@@ -9,7 +9,7 @@
 - **文档能力 (docs capability)**:基于 context7 的"查库文档"能力。它天然是**两步**的。
 - **发现 (discovery)**[step-1]:从一个查询里**认出是哪个库**,返回候选库(含 libraryId、标题、描述、评分)。
 - **检索 (retrieval)**[step-2]:给定一个库(libraryId)+ 一个**概念查询**,取回该库的精准文档片段。
-- **MCP 网关 (MCP gateway)**:nginx 反向代理一个外部 MCP 服务器,把它作为工具层的一部分身份暴露(如 `/wd/mcp` → Wikimedia wikidata MCP)。
+- **MCP 网关 (MCP gateway)**:nginx 把多个外部 MCP 服务器统一到 `/mcp/<service>` 前缀,作为工具层的一部分身份暴露;当前包括 context7(库文档)、wikidata(结构化数据)和 grep_app(代码搜索)。
 
 ## 关键区分
 
