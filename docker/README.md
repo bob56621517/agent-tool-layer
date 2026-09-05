@@ -2,7 +2,7 @@
 
 给 LLM / agent 提供"联网"能力的一套本地容器化后端。对外暴露的是 **HTTP API**(不只是 MCP),agent 可以直接用 HTTP 调它。
 
-一个 nginx 入口(唯一对外端口 `28082`)把两个服务伪装成一个:聚合搜索 + 网页读取。整个后端在本地跑,不依赖公有云。
+一个 nginx 入口(唯一对外端口 `28082`)把多个服务伪装成一个:聚合搜索 + 网页读取 + MCP 网关。核心 REST 能力在本地跑;MCP 网关按需代理外部公网服务。
 
 ## 功能一览
 
@@ -12,6 +12,9 @@
 | 聚合搜索(HTML 页面) | `GET /search?q=...` | 直接用浏览器搜 |
 | 网页转 Markdown | `GET /read/<url>` | 读取任意 URL,返回 Markdown 文本 |
 | 服务配置 | `GET /config` | 当前启用的引擎等信息 |
+| context7 | `/mcp/context7/` | **MCP** 代理(不是 REST),用于库文档 |
+| wikidata | `/mcp/wikidata/` | **MCP** 代理(不是 REST),用于结构化数据 |
+| grep_app | `/mcp/grep_app/` | **MCP** 代理(不是 REST),用于代码搜索 |
 
 - searxng 的原始路由( `/search`、`/config` 等)原样保留在根路径;
 - 网页读取挂在 `/read/` 前缀下(映射到 jina reader);
@@ -19,6 +22,22 @@
 - 限流由 nginx 承担(按客户端 IP),searxng 关闭自身 limiter。
 
 服务构成:**nginx(唯一入口,负责限流)+ searxng(聚合搜索)+ jina(Reader)**。无 valkey——限流在 nginx 层做,searxng 用不到 valkey。
+
+## MCP 网关
+
+`/mcp/<service>` 前缀统一代理三个外部 MCP 服务器:`context7`、`wikidata` 和 `grep_app`。这些接口遵循 MCP streamable-HTTP 语义(JSON-RPC + SSE),不是普通 REST API。MCP 客户端可以把这个网关作为单一 base URL 使用,再按服务名区分后端;认证由各 MCP 服务自持,当前三个服务均匿名访问。
+
+无尾斜杠请求会通过 `308` 重定向到有尾斜杠形式,因此 `POST /mcp/context7` 与 `POST /mcp/context7/` 都可连。MCP 流量不套用 web 路由的 5 r/s 限流,由上游自行限流。
+
+验证示例:
+
+```bash
+curl -L -sS http://localhost:28082/mcp/context7/ \
+  -X POST \
+  -H 'Accept: application/json, text/event-stream' \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"verify","version":"1.0"}}}'
+```
 
 ## 部署
 
@@ -129,6 +148,8 @@ docker/
 ├── .env.example                # 环境变量模板
 └── .gitignore
 ```
+
+REST 能力(`/search`、`/read`、`/config`)保持不变。
 
 ## 常见问题
 
