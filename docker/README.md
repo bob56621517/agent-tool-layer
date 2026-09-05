@@ -15,6 +15,7 @@
 | context7 | `/mcp/context7/` | **MCP** 代理(不是 REST),用于库文档 |
 | wikidata | `/mcp/wikidata/` | **MCP** 代理(不是 REST),用于结构化数据 |
 | grep_app | `/mcp/grep_app/` | **MCP** 代理(不是 REST),用于代码搜索 |
+| **MCP 层(stdio)** | 本地 stdio(无 HTTP path) | 本地 stdio MCP,`web_search` / `fetch_url` / `read_file` 三工具,复用本入口;详见 [`../mcp/README.md`](../mcp/README.md) |
 
 - searxng 的原始路由( `/search`、`/config` 等)原样保留在根路径;
 - 网页读取挂在 `/read/` 前缀下(映射到 jina reader);
