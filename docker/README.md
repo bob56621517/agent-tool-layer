@@ -2,7 +2,7 @@
 
 给 LLM / agent 提供"联网"能力的一套本地容器化后端。对外暴露的是 **HTTP API**(不只是 MCP),agent 可以直接用 HTTP 调它。
 
-一个 nginx 入口(唯一对外端口 `28082`)把多个服务伪装成一个:聚合搜索 + 网页读取 + MCP 网关。核心 REST 能力在本地跑;MCP 网关按需代理外部公网服务。
+一个 nginx 入口(唯一对外端口 `28082`)把多个服务伪装成一个:聚合搜索 + 网页读取 + MCP 网关。核心 REST 能力在本地跑;`mcp/` 内的 stdio MCP 层也复用这个入口;MCP 网关按需代理外部公网服务。
 
 ## 功能一览
 
@@ -57,7 +57,7 @@ cp .env.example .env
 
 可选项(不填则对应能力降级):
 
-- `BOCHA_API_KEY` —— bocha(博查)付费兜底搜索。不填则聚合只靠常用源,网络差时可能无结果。bocha 单次拉满返回 50 条(博查按次计费,拉满不贵)。
+- `BOCHA_API_KEY` —— bocha(博查)付费兜底搜索的**启动兜底 key**。不填时 bocha 引擎仍启用,可由调用方传 `X-Bocha-Api-Key` 提供 key;无 key 的 bocha 请求会认证失败,但不影响其它聚合源。bocha 单次拉满返回 50 条(博查按次计费,拉满不贵)。
 - `GITHUB_TOKEN` —— 见下方"GitHub 搜索"说明,默认不填(走匿名限流)。
 
 ### 2. 启动
@@ -96,6 +96,9 @@ curl "http://localhost:28082/config"
 # JSON 结果(给 agent 用)
 curl "http://localhost:28082/search?format=json&q=deepseek"
 
+# 启动 env 没填 key 时,也可由客户端动态传 key(不要把 key 提交进仓库)
+curl -H "X-Bocha-Api-Key: $BOCHA_API_KEY" "http://localhost:28082/search?format=json&q=deepseek"
+
 # 只调某个引擎(用引擎名,单名单词引擎可直接过滤;带空格的引擎名需 URL 编码)
 curl "http://localhost:28082/search?format=json&q=test&engines=bocha"
 curl "http://localhost:28082/search?format=json&q=searxng&engines=github"
@@ -133,6 +136,7 @@ curl "http://localhost:28082/search?format=json&q=python&categories=general"
 
 - **常用源**:google / bing / baidu / duckduckgo / 360search。部分网络环境下(数据中心 IP)google / duckduckgo / baidu 可能被反爬(超时或 CAPTCHA),searxng 会自动隔离这些失败引擎,不阻塞整体结果。bing / 360 相对稳。
 - **bocha(兜底)**:付费源(博查),权重较高,保证任何网络条件下有结果。只用 `web-search` 端点,不带 AI 总结。单次拉满 50 条。
+- **bocha key**:searxng 启动时无 key 也不会禁用 bocha;请求线程优先读取客户端 `X-Bocha-Api-Key`(或 `Authorization: Bearer ...`),兜底使用启动 env/settings 注入的 key。
 - **github**:仓库搜索(`github`)。**github_code(代码搜索)**:走 `GITHUB_TOKEN` 环境变量(启动时由 `entrypoint.sh` 自动注入 settings,不落盘)。设了 `GITHUB_TOKEN` 用认证模式(配额高);不设则自动回退匿名(限流严)。
 
 ## 目录结构
@@ -150,6 +154,19 @@ docker/
 ```
 
 REST 能力(`/search`、`/read`、`/config`)保持不变。
+
+## MCP stdio 层
+
+`mcp/` 提供 `web_search`、`fetch_url`、`read_file` 三个 MCP 工具。启动前先探测 `:28082/config`;端口不通时用仓库内置 `docker/` 执行 `docker compose up -d`,后台服务保持常驻。
+
+```bash
+cd mcp
+bun install
+bun run build
+node dist/mcp/index.js
+```
+
+产物 `dist/` 已包含运行时需要的 `docker/`(不含本地密钥 `.env`)。`node dist/mcp/index.js` 或 `bun dist/mcp/index.js` 可作为 agent 的 stdio MCP command;按需通过进程环境设置 `TOOL_LAYER_URL`、`READ_TIMEOUT`、`READ_LENGTH`、`BOCHA_API_KEY`、`SEARXNG_SECRET`、`GITHUB_TOKEN`。
 
 ## 常见问题
 

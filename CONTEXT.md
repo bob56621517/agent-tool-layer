@@ -3,6 +3,8 @@
 本文件只记录术语与定义 —— 语义,不是实现细节。
 
 - **工具层 (tool-layer)**:对外的 HTTP 后端。唯一入口是 nginx(`:28082`)。它把多个**能力**伪装成一个服务。
+- **MCP 层 (mcp layer)**:agent-tool-layer 内的 stdio 本地 MCP 服务子目录 `mcp/`。它经 bun 打包,暴露 `web_search`、`fetch_url`、`read_file` 三工具;外部能力走 tool-layer 的 `:28082` 入口。
+- **MCP 层 (mcp layer)**:agent-tool-layer 内的 stdio 本地 MCP 服务子目录 `mcp/`。它经 bun 打包,暴露 `web_search`、`fetch_url`、`read_file` 三工具;外部能力走 tool-layer 的 `:28082` 入口。
 - **能力 (capability)**:工具层对外暴露的一个功能面:聚合搜索(searxng)、网页读取(jina)、文档检索(context7)、结构化数据(wikidata)。
 - **引擎 (engine)**:searxng 的一个来源模块,把数据归一化成搜索结果三元组 `{url, title, content}`(如 google、bing、github、github code)。
 - **搜索结果协议 (search-result protocol)**:三元组 `{url, title, content}`。`url` 指向一个稳定资源;`content` 是对该资源的摘要。逻辑假设:**同一网址 ↔ 同一内容**,可缓存、可复用、可分享。

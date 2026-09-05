@@ -14,7 +14,8 @@
 ====
 
 在 ``settings.yml`` 引擎清单中添加一个条目,并通过环境变量 ``BOCHA_API_KEY``
-注入密钥(见 ``docker-compose.yml``)::
+注入兜底密钥(见 ``docker-compose.yml``);调用方也可传入
+``X-Bocha-Api-Key`` 请求头动态提供密钥::
 
   - name: bocha
     engine: bocha
@@ -36,6 +37,7 @@ import re
 from dateutil import parser as date_parser
 
 from searx.exceptions import SearxEngineAccessDeniedException
+from searx.extended_types import sxng_request
 from searx.network import get_context_network
 from searx.network.client import get_loop
 
@@ -80,8 +82,9 @@ _bocha_count = 50
 def init(engine_settings):
     """初始化:读取 settings.yml 中 bocha 条目的 ``api_key`` 与 ``count``.
 
-    未配置 ``BOCHA_API_KEY`` 时返回 ``False``,让 searxng 跳过本引擎(不启用),
-    而非报错——考虑欠费/未配置场景,bocha 作为兜底源不应阻塞其它引擎。
+    未配置 ``BOCHA_API_KEY`` 时也启用引擎;此时若调用方请求头提供 key,
+    仍可访问 bocha。无 key 的请求会在 bocha API 侧返回认证错误,searxng
+    会隔离该引擎,不影响其它聚合源。
     """
     global _bocha_api_key, _bocha_count
 
@@ -97,19 +100,23 @@ def init(engine_settings):
     except (TypeError, ValueError):
         _bocha_count = 50
 
-    # 无 key 时不启用引擎(searxng 会跳过它,不阻塞聚合)
-    return bool(_bocha_api_key)
+    return True
 
 
 def request(query, params):
     """构建 POST 请求:填入 URL、headers、json body."""
-    if not _bocha_api_key:
-        # 不应发生(init 无 key 时引擎不会被调用),这里防御性返回空结果
-        return params
-
     body = {"query": query}
     body["summary"] = True
     body["count"] = _bocha_count
+
+    # 日期区间不能直接映射为 searxng 的 time_range,由调用方通过
+    # engine_data[bocha][freshness] 透传给本引擎。
+    engine_freshness = (params.get("engine_data") or {}).get("freshness")
+    if engine_freshness and (
+        engine_freshness in FRESHNESS_VALUES
+        or re.match(FRESHNESS_DATE_RANGE, str(engine_freshness))
+    ):
+        body["freshness"] = engine_freshness
 
     # 若 searxng 提供了 time_range,映射为 bocha freshness。
     # searxng 的取值是 day/week/month/year,bocha 要求 oneDay/oneWeek/oneMonth/oneYear,
@@ -122,9 +129,23 @@ def request(query, params):
         else:
             body["freshness"] = "noLimit"
 
-    params["url"] = search_api
+    # SearXNG 在请求线程里执行引擎;Flask request 上下文可拿到客户端 header。
+    # 本地测试/初始化线程没有该上下文时,安全回退到启动注入的兜底 key。
+    client_api_key = ""
+    try:
+        client_api_key = sxng_request.headers.get("X-Bocha-Api-Key", "")
+        if not client_api_key:
+            authorization = sxng_request.headers.get("Authorization", "")
+            if authorization.lower().startswith("bearer "):
+                client_api_key = authorization[7:].strip()
+    except RuntimeError:
+        client_api_key = ""
+    api_key = client_api_key or _bocha_api_key
+
     params["method"] = "POST"
-    params["headers"]["Authorization"] = f"Bearer {_bocha_api_key}"
+    params["url"] = search_api
+    if api_key:
+        params["headers"]["Authorization"] = f"Bearer {api_key}"
     params["headers"]["Content-Type"] = "application/json"
     params["json"] = body
 

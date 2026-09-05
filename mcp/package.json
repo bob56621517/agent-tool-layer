@@ -1,0 +1,20 @@
+{
+  "name": "agent-tool-layer-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "bun build src/index.ts --target node --outdir dist/mcp && bun run scripts/copy-docker.ts",
+    "start": "bun run src/index.ts",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "bun-types": "^1.4.1",
+    "typescript": "^7.0.2"
+  }
+}
