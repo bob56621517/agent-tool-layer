@@ -56,7 +56,7 @@ bun run build
 |------|------|------|
 | `query` | string **必填** | 搜索词 |
 | `count` | number 可选 | 返回条数,默认 20,上限 50 |
-| `freshness` | string 可选 | 时效:`noLimit`/`oneDay`/`oneWeek`/`oneMonth`/`oneYear`,或日期/区间 `YYYY-MM-DD`(..`YYYY-MM-DD`);无效值会被忽略 |
+| `freshness` | string 可选 | 时效:`noLimit`/`oneDay`/`oneWeek`/`oneMonth`/`oneYear`,或单个日期 `YYYY-MM-DD` / 区间 `YYYY-MM-DD..YYYY-MM-DD`;无效值会被忽略 |
 | `include` | string 可选 | 限定域名,多个用 `\|` 或 `,` 分隔 |
 
 ### `fetch_url`
@@ -93,7 +93,7 @@ bun run build
 进程每次被拉起时,先检查 `${TOOL_LAYER_URL}/config` 是否返回 2xx:
 
 - **情况 1(端口通)**:后台服务已存在,直接使用现有 searxng + jina;
-- **情况 2(端口不通)**:定位内置 `docker/docker-compose.yml`(优先仓库根 `docker/`,打包形态回退 `dist/docker/`)→ 校验 `docker/.env`(缺则从 `.env.example` 复制;`SEARXNG_SECRET` 必填,否则报错)→ `docker compose up -d`(**幂等**,已在则不重建;容器 `restart: unless-stopped` 保障后台常驻)→ 等 `:28082/read` 就绪后继续。
+- **情况 2(端口不通)**:定位内置 `docker/docker-compose.yml`(优先仓库根 `docker/`,打包形态回退 `dist/docker/`)→ 校验 `docker/.env`(缺则从 `.env.example` 复制;`SEARXNG_SECRET` 必填,否则报错)→ `docker compose up -d`(**幂等**,已在则不重建;容器 `restart: unless-stopped` 保障后台常驻)→ 轮询 `${TOOL_LAYER_URL}/config` 直至返回 2xx(最长等 5 分钟,超时报「后台服务启动超时」)。
 
 > MCP 进程本身短命(stdio),但 docker 后台服务持续常驻;agent 下次拉起时端口已通,直接走情况 1。
 
